@@ -234,28 +234,64 @@ class RSSMEvaluator:
 
             pil = Image.fromarray(composite)
             draw = ImageDraw.Draw(pil)
-            try:
-                font = ImageFont.load_default()
-            except Exception:
-                font = None
+            # Choose a readable font size based on image height and try to load a
+            # TrueType font for scalable text. Fall back to the default font if
+            # no TTF is available.
+            # Make the font noticeably larger for video readability
+            font_size = max(18, H // 12)
+            font = None
+            for font_name in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+                try:
+                    font = ImageFont.truetype(font_name, font_size)
+                    break
+                except Exception:
+                    continue
+            if font is None:
+                for font_path in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        break
+                    except Exception:
+                        continue
+            if font is None:
+                try:
+                    font = ImageFont.load_default()
+                except Exception:
+                    font = None
 
             # Row labels at left
-            label_margin = 6
-            draw.rectangle([(0, 0), (80, 18)], fill=(0, 0, 0, 160))
+            label_margin = max(6, font_size // 3)
+            left_w = max(80, font_size * 6)
+            box_h = font_size + 6
+            draw.rectangle([(0, 0), (left_w, box_h)], fill=(0, 0, 0))
             draw.text((label_margin, 1), 'GT', fill=(255, 255, 255), font=font)
-            draw.rectangle([(0, H), (80, H + 18)], fill=(0, 0, 0, 160))
+            draw.rectangle([(0, H), (left_w, H + box_h)], fill=(0, 0, 0))
             draw.text((label_margin, H + 1), 'PRED', fill=(255, 255, 255), font=font)
 
             # Column timestep labels centered above each column
             cols = (pred_length or model.pred_length) + 1
+            # recompute column width based on actual concatenated row width
+            W = max(1, row_gt.shape[1] // cols)
             for k in range(cols):
                 x_center = int(k * W + W // 2)
                 label = f't+{k}' if k > 0 else 't'
-                text_w, text_h = draw.textsize(label, font=font)
+                # get text size in a backend-compatible way
+                try:
+                    if font is not None and hasattr(font, 'getsize'):
+                        text_w, text_h = font.getsize(label)
+                    else:
+                        bbox = draw.textbbox((0, 0), label, font=font)
+                        text_w = bbox[2] - bbox[0]
+                        text_h = bbox[3] - bbox[1]
+                except Exception:
+                    bbox = draw.textbbox((0, 0), label, font=font)
+                    text_w = bbox[2] - bbox[0]
+                    text_h = bbox[3] - bbox[1]
                 tx = max(2, x_center - text_w // 2)
-                # semi-transparent background for text
-                draw.rectangle([(tx - 2, 0), (tx + text_w + 2, 16)], fill=(0, 0, 0, 160))
-                draw.text((tx, 0), label, fill=(255, 255, 255), font=font)
+                # background for text (opaque black)
+                draw.rectangle([(tx - 2, 0), (tx + text_w + 2, box_h)], fill=(0, 0, 0))
+                draw.text((tx, 1), label, fill=(255, 255, 255), font=font)
 
             composite = np.asarray(pil)
             writer.append_data(composite)
@@ -288,15 +324,29 @@ class RSSMEvaluator:
             kld.append(kld_value)
             total.append(recon_value + kld_value)
 
+        # Use a non-interactive backend so saving works over SSH/headless
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+        except Exception:
+            import matplotlib.pyplot as plt
+
         figure, axis = plt.subplots(figsize=(8, 4))
-        axis.plot(episodes, reconstruction, label='Reconstruction')
-        axis.plot(episodes, kld, label='KLD')
-        axis.plot(episodes, total, label='Total')
+        axis_kld = axis.twinx()
+
+        recon_line = axis.plot(episodes, reconstruction, label='Reconstruction', color='tab:blue')[0]
+        total_line = axis.plot(episodes, total, label='Total', color='tab:green', linestyle='--', alpha=0.8)[0]
+        kld_line = axis_kld.plot(episodes, kld, label='KLD', color='tab:orange')[0]
+
         axis.set_xlabel('Episode')
-        axis.set_ylabel('Loss')
+        axis.set_ylabel('Reconstruction / Total', color='tab:blue')
+        axis_kld.set_ylabel('KLD', color='tab:orange')
+        axis.tick_params(axis='y', labelcolor='tab:blue')
+        axis_kld.tick_params(axis='y', labelcolor='tab:orange')
         axis.set_title('RSSM Training Loss')
         axis.grid(True, alpha=0.3)
-        axis.legend()
+        axis.legend([recon_line, total_line, kld_line], ['Reconstruction', 'Total', 'KLD'], loc='best')
         figure.tight_layout()
 
         if epoch is None:
@@ -359,9 +409,14 @@ class TrajectoryReplayBuffer:
         if not self.episodes:
             raise RuntimeError('replay buffer is empty')
 
+        min_obs_len = context_length + pred_length
+        eligible_episodes = [episode for episode in self.episodes if len(episode['obs']) >= min_obs_len]
+        if not eligible_episodes:
+            raise RuntimeError('no episodes in replay buffer are long enough for the requested context/prediction window')
+
         batch = []
         for _ in range(batch_size):
-            episode = random.choice(self.episodes)
+            episode = random.choice(eligible_episodes)
             obs = episode['obs']
             actions = episode['action']
             rewards = episode['reward']

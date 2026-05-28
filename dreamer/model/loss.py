@@ -16,13 +16,13 @@ class RSSMLoss(nn.Module):
     def __init__(self, num_epochs, loss_params):
         super().__init__()
         self.num_epochs = num_epochs
-        self.recon_mult = loss_params['recon_mult']
-        self.beta = loss_params['beta']
-        self.lam = loss_params['lambda']
-        self.free_nats = loss_params.get('free_nats', 0.0)
+        self.recon_mult = float(loss_params['recon_mult'])
+        self.beta = float(loss_params['beta'])
+        self.lam = float(loss_params['lambda'])
+        self.free_nats = float(loss_params.get('free_nats', 0.0))
         self.anneal_mode = loss_params['kld_anneal_mode']
         self.image_loss = loss_params.get('image_loss', 'mse')
-        self.reward_mult = loss_params.get('reward_mult', 1.0)
+        self.reward_mult = float(loss_params.get('reward_mult', 1.0))
 
     def kld_anneal(self, epoch):
         if self.anneal_mode == 'const':

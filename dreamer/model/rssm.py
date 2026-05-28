@@ -7,6 +7,7 @@ Author: Jared Berry
 """
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from dreamer.model.encoder import ConvEncoder
 from dreamer.model.decoder import ConvDecoder, ScalarUncertaintyConvDecoder
@@ -175,6 +176,14 @@ class RSSM(nn.Module):
 
     def _reward_features(self, h, z):
         return torch.cat([h[-1], z], dim=-1)
+
+    def _match_image_shape(self, image, reference):
+        """
+        Resize decoded image to match reference spatial size if needed.
+        """
+        if image.shape[-2:] != reference.shape[-2:]:
+            image = F.interpolate(image, size=reference.shape[-2:], mode='bilinear', align_corners=False)
+        return image
     
     def transition(self, x, x_next, u, zs, feature=None, feature_next=None):
         h = torch.zeros(self.num_layers, x.size(0), self.deterministic_size, device=self.device)
@@ -186,6 +195,7 @@ class RSSM(nn.Module):
             x_recon, x_recon_uncertainty = self.decoder(zs[:, -1])
         else:
             x_recon = self.decoder(zs[:, -1])
+        x_recon = self._match_image_shape(x_recon, x[:, -1])
 
         if self.reward_decoder is not None:
             reward_recon = self.reward_decoder(self._reward_features(h, zs[:, -1]))
@@ -223,6 +233,7 @@ class RSSM(nn.Module):
                 x_pred_uncerts.append(x_pred_uncert)
             else:
                 x_pred = self.decoder(z_prior)
+            x_pred = self._match_image_shape(x_pred, x_next[:, t])
             x_preds.append(x_pred)
 
             if self.reward_decoder is not None:
