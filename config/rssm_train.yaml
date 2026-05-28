@@ -1,0 +1,53 @@
+env:
+  name: CartPole-v1
+  image_size: 64
+  grayscale: false
+  eval_render_mode: rgb_array
+
+model:
+  enc_latent_size: 256
+  stochastic_size: 32
+  deterministic_size: 128
+  past_length: 3
+  pred_length: 3
+  output_uncertainty: false
+  reward_size: 1
+
+  conv_params:
+    in_image_shape: [3, 64, 64]
+    out_image_shape: [3, 64, 64]
+    enc_kernel_size: 3
+    dec_kernel_size: 3
+    stride: 2
+    pad: 1
+
+loss:
+  recon_mult: 1e3
+  beta: 1e-4
+  lambda: 1e-3
+  free_nats: 0.0
+  kld_anneal_mode: linear
+  image_loss: mse
+  reward_mult: 1.0
+
+training:
+  seed: 0
+  device: cpu
+  epochs: 200
+  batch_size: 64
+  learning_rate: 2e-4
+  buffer_capacity: 2000
+  updates_per_epoch: 1
+  start_training_after: 5
+  grad_clip: 100.0
+  max_episode_steps: 200
+
+evaluation:
+  render_every_epochs: 25
+  max_episode_steps: 500
+
+checkpoint:
+  run_root: runs
+  save_every_epochs: 100
+  final_weights_name: rssm_final.pt
+  load_weights_path: null
