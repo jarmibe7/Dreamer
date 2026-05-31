@@ -209,6 +209,18 @@ def main():
         eval_max_steps=config['evaluation'].get('max_episode_steps'),
     )
 
+    train_episodes = int(config['training']['epochs'])
+    train_max_steps = config['training'].get('max_episode_steps')
+    if train_max_steps is None:
+        print(f"Planned real training timesteps: unknown (training.max_episode_steps is unset for {train_episodes} episodes)")
+    else:
+        train_max_steps = int(train_max_steps)
+        total_real_timesteps = train_episodes * train_max_steps
+        print(
+            f"Planned real training timesteps: {total_real_timesteps} "
+            f"({train_episodes} episodes x {train_max_steps} max steps)"
+        )
+
     try:
         trainer.train_online(
             num_episodes=config['training']['epochs'],

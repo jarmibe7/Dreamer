@@ -18,7 +18,6 @@ class RSSMLoss(nn.Module):
         self.num_epochs = num_epochs
         self.recon_mult = float(loss_params['recon_mult'])
         self.beta = float(loss_params['beta'])
-        self.lam = float(loss_params['lambda'])
         self.free_nats = float(loss_params.get('free_nats', 0.0))
         self.anneal_mode = loss_params['kld_anneal_mode']
         self.image_loss = loss_params.get('image_loss', 'mse')

@@ -260,6 +260,8 @@ class RSSM(nn.Module):
             else:
                 mu_q, log_var_q, zs = self.encode_posterior(window)
 
+            z = zs[:, -1]
+
             # # posterior update using real next frame
             # enc = self.encoder(x_next[:, t])
             # stats = self.post(enc)
@@ -298,137 +300,45 @@ class RSSM(nn.Module):
         _, _, zs = self.encode_posterior(x, feature)
         outputs = self.transition(x, x_next, u, zs, feature=feature, feature_next=feature_next)
         return outputs
-    
 
-    def reconstruct(self, x_traj, feature_traj=None):
-        """
-        Reconstruct an entire trajectory to test encoder/decoder
-        """
+    def sample_traj(self, x0, u_seq):
+        """Generate a trajectory of predicted images given initial observation and control sequence."""
+        if self.has_feature:
+            raise NotImplementedError('sample_traj currently supports image-only rollouts.')
+
+        if x0.dim() == 3:
+            x0 = x0.unsqueeze(0)
+        if u_seq.dim() == 2:
+            u_seq = u_seq.unsqueeze(0)
+
+        x0 = x0.to(self.device).float()
+        u_seq = u_seq.to(self.device).float()
+
+        # Keep original render size for output, but encode at model input resolution.
+        x0_ref = x0
+        model_h = int(self.out_image_shape[1])
+        model_w = int(self.out_image_shape[2])
+        if x0.shape[-2:] != (model_h, model_w):
+            x0_model = F.interpolate(x0, size=(model_h, model_w), mode='bilinear', align_corners=False)
+        else:
+            x0_model = x0
+
         with torch.no_grad():
-            frames = []
-            for idx, x in enumerate(x_traj):
-                # Encode current state
-                encoded = self.encoder(x.unsqueeze(0))
-                if self.has_feature:
-                    if feature_traj is None:
-                        raise ValueError("feature trajectory is required when feature_size is set")
-                    feature_enc = self.feature_encoder(feature_traj[idx].unsqueeze(0).float())
-                    encoded = torch.cat([encoded, feature_enc], dim=-1)
+            context = x0_model.unsqueeze(1).repeat(1, self.past_length, 1, 1, 1)
+            _, _, zs = self.encode_posterior(context)
 
-                # Get latent variable
-                stats = self.post(encoded)
-                mu, log_var = stats.chunk(2, dim=-1)
-                z = self.reparameterize(mu, log_var)
+            h = torch.zeros(self.num_layers, x0_model.size(0), self.deterministic_size, device=self.device)
+            z = zs[:, -1]
 
-                if self.output_uncertainty:
-                    decoded, _ = self.decoder(z)
-                else:
-                    decoded = self.decoder(z)
-                frames.append(decoded)
+            x_recon = self.decoder(z)
+            x_recon = self._match_image_shape(x_recon, x0_ref)
 
-            return torch.concat(frames, dim=0).squeeze(0).to('cpu').permute(0, 2, 3, 1)
+            preds = [x_recon[0].permute(1, 2, 0)]
+            for t in range(u_seq.size(1)):
+                h, z_prior, _, _ = self.rssm_step(h, z.unsqueeze(1), u_seq[:, t])
+                x_pred = self.decoder(z_prior)
+                x_pred = self._match_image_shape(x_pred, x0_ref)
+                preds.append(x_pred[0].permute(1, 2, 0))
+                z = z_prior
 
-    def sample_traj(self, x0, u_seq, feature0=None):
-        """
-        Sample an entire trajectory, starting from an initial condition
-        """
-        self.eval()
-        with torch.no_grad():
-            # Ensure batch dimension
-            if x0.dim() == 3:
-                x0 = x0.unsqueeze(0)
-            if feature0 is not None and feature0.dim() == 1:
-                feature0 = feature0.unsqueeze(0)
-
-            batch_size = x0.size(0)
-            seq_len = u_seq.size(0)
-
-            # Initialize deterministic state
-            h = torch.zeros(batch_size, self.deterministic_size, device=self.device)
-
-            # Encode initial observation
-            enc = self.encoder(x0.to(self.device))
-            if self.has_feature:
-                if feature0 is None:
-                    raise ValueError("feature input is required when feature_size is set")
-                feat_enc = self.feature_encoder(feature0.to(self.device).float())
-                enc = torch.cat([enc, feat_enc], dim=-1)
-
-            # Initial posterior
-            stats = self.post(enc)
-            mu, log_var = stats.chunk(2, dim=-1)
-            z = self.reparameterize(mu, log_var)
-
-            frames = []
-
-            # Decode initial state
-            if self.output_uncertainty:
-                x_dec, _ = self.decoder(z)
-            else:
-                x_dec = self.decoder(z)
-            frames.append(x_dec)
-
-            # Rollout using prior only
-            for t in range(seq_len):
-                u_t = u_seq[t].unsqueeze(0).to(self.device)
-
-                h, z, mu_p, log_var_p = self.rssm_step(h, z, u_t)
-
-                if self.output_uncertainty:
-                    x_dec, _ = self.decoder(z)
-                else:
-                    x_dec = self.decoder(z)
-
-                frames.append(x_dec)
-
-            # Format output
-            frames = torch.cat(frames, dim=0)           # [T+1, C, H, W]
-            frames = frames.permute(0, 2, 3, 1).cpu()   # [T+1, H, W, C]
-
-            return frames
-        
-    def sample(self, x, u, feature=None, return_all=False):
-        """
-        Predict the next image in a sequence
-        """
-        self.eval()
-        with torch.no_grad():
-            sample_return = {}
-
-            # Encode current state
-            mu, log_var, z = self.encode_posterior(x, feature)
-
-            # Initialize deterministic state h to zeros
-            h = torch.zeros(self.num_layers, mu.shape[0], self.deterministic_size, device=self.device)
-
-            # RSSM prior rollout (predict next latent)
-            h_next, z_pred, mu_pred, log_var_pred = self.rssm_step(h, z, u)
-
-             # Decode next observation
-            if self.output_uncertainty:
-                x_recon, x_recon_uncertainty = self.decoder(z)
-                x_pred, x_pred_recon_uncertainty = self.decoder(z_pred)
-                sample_return['x_recon_uncertainty'] = x_recon_uncertainty
-                sample_return['x_pred_recon_uncertainty'] = x_pred_recon_uncertainty
-            else:
-                x_recon = self.decoder(z)
-                x_pred = self.decoder(z_pred)
-
-            if self.reward_decoder is not None:
-                sample_return['reward_recon'] = self.reward_decoder(self._reward_features(h, z))
-                sample_return['reward_pred'] = self.reward_decoder(self._reward_features(h_next, z_pred))
-
-            # Save results
-            sample_return['x_recon'] = x_recon
-            sample_return['x_pred'] = x_pred
-            sample_return['mu'] = mu
-            sample_return['log_var'] = log_var
-            sample_return['h_next'] = h_next
-            sample_return['mu_pred'] = mu_pred
-            sample_return['log_var_pred'] = log_var_pred
-            sample_return['z_pred'] = z_pred
-
-            if return_all:
-                return x_recon.squeeze(0), x_pred.squeeze(0), sample_return
-            else:
-                return x_recon.squeeze(0), x_pred.squeeze(0)
+            return torch.stack(preds, dim=0).clamp(0.0, 1.0)

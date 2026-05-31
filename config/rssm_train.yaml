@@ -1,5 +1,5 @@
 env:
-  name: CartPole-v1
+  name: Acrobot-v1
   image_size: 64
   grayscale: false
   eval_render_mode: rgb_array
@@ -16,15 +16,14 @@ model:
   conv_params:
     in_image_shape: [3, 64, 64]
     out_image_shape: [3, 64, 64]
-    enc_kernel_size: 3
+    enc_kernel_size: 2
     dec_kernel_size: 3
     stride: 2
     pad: 1
 
 loss:
   recon_mult: 1e3
-  beta: 1e-4
-  lambda: 1e-3
+  beta: 1e-6
   free_nats: 0.0
   kld_anneal_mode: linear
   image_loss: mse
@@ -32,18 +31,18 @@ loss:
 
 training:
   seed: 0
-  device: cpu
-  epochs: 200
+  device: cuda:0
+  epochs: 1000
   batch_size: 64
   learning_rate: 2e-4
   buffer_capacity: 2000
-  updates_per_epoch: 1
+  updates_per_epoch: 5
   start_training_after: 5
   grad_clip: 100.0
   max_episode_steps: 200
 
 evaluation:
-  render_every_epochs: 25
+  render_every_epochs: 100
   max_episode_steps: 500
 
 checkpoint:

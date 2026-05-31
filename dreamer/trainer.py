@@ -142,7 +142,7 @@ class RSSMEvaluator:
             filename = f'episode_epoch.mp4'
         video_path = self.video_dir / filename
 
-        writer = imageio.get_writer(str(video_path), fps=30, codec='libx264')
+        writer = imageio.get_writer(str(video_path), fps=30, codec='libx264', macro_block_size=1)
 
         device = getattr(model, 'device', None)
         if device is None:
@@ -187,22 +187,16 @@ class RSSMEvaluator:
                 u_seq_list.append(torch.from_numpy(uvec).float())
 
             if len(u_seq_list) == 0:
-                # nothing to predict, just duplicate current reconstruction
-                pred_images = [curr_frame] * ( (pred_length or model.pred_length) + 1)
+                raise RuntimeError(f'No control seq to predict in eval video {t}')
             else:
                 u_seq = torch.stack(u_seq_list, dim=0)
                 try:
                     pred_traj = model.sample_traj(x0, u_seq)
                 except Exception:
-                    # fallback: single-step sample
-                    try:
-                        x_recon, x_pred = model.sample(x0, u_seq_list[0].unsqueeze(0).to(device))
-                        pred_traj = torch.stack([x_recon.unsqueeze(0), x_pred.unsqueeze(0)], dim=0).squeeze(1)
-                    except Exception:
-                        pred_traj = None
+                    pred_traj = None
 
                 if pred_traj is None:
-                    pred_images = [curr_frame] * ( (pred_length or model.pred_length) + 1)
+                    raise RuntimeError(f'Eval video prediction failed at step {t}')
                 else:
                     # pred_traj: [T+1, H, W, C]
                     pred_np = (pred_traj.cpu().numpy() * 255.0).astype(np.uint8)
@@ -310,17 +304,21 @@ class RSSMEvaluator:
 
         episodes = []
         reconstruction = []
+        image_reconstruction = []
+        reward_reconstruction = []
         kld = []
         total = []
 
         for entry in loss_history:
             loss_return = entry['loss_return']
-            recon_value = loss_return.get('Image Reconstruction Loss', 0.0)
-            recon_value += loss_return.get('Feature Reconstruction Loss', 0.0)
-            recon_value += loss_return.get('Reward Reconstruction Loss', 0.0)
+            image_recon_value = loss_return.get('Image Reconstruction Loss', 0.0)
+            reward_recon_value = loss_return.get('Reward Reconstruction Loss', 0.0)
+            recon_value = image_recon_value + loss_return.get('Feature Reconstruction Loss', 0.0) + reward_recon_value
             kld_value = loss_return.get('KLD', 0.0)
             episodes.append(entry['episode'])
             reconstruction.append(recon_value)
+            image_reconstruction.append(image_recon_value)
+            reward_reconstruction.append(reward_recon_value)
             kld.append(kld_value)
             total.append(recon_value + kld_value)
 
@@ -332,21 +330,34 @@ class RSSMEvaluator:
         except Exception:
             import matplotlib.pyplot as plt
 
-        figure, axis = plt.subplots(figsize=(8, 4))
+        figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+        axis = axes[0]
         axis_kld = axis.twinx()
+        recon_axis = axes[1]
+        reward_axis = recon_axis.twinx()
 
         recon_line = axis.plot(episodes, reconstruction, label='Reconstruction', color='tab:blue')[0]
         total_line = axis.plot(episodes, total, label='Total', color='tab:green', linestyle='--', alpha=0.8)[0]
         kld_line = axis_kld.plot(episodes, kld, label='KLD', color='tab:orange')[0]
 
+        image_recon_line = recon_axis.plot(episodes, image_reconstruction, label='Image Reconstruction', color='tab:blue')[0]
+        reward_recon_line = reward_axis.plot(episodes, reward_reconstruction, label='Reward Reconstruction', color='tab:red')[0]
+
         axis.set_xlabel('Episode')
-        axis.set_ylabel('Reconstruction / Total', color='tab:blue')
+        axis.set_ylabel('Reconstruction / Total', color='tab:green')
         axis_kld.set_ylabel('KLD', color='tab:orange')
-        axis.tick_params(axis='y', labelcolor='tab:blue')
+        axis.tick_params(axis='y', labelcolor='tab:green')
         axis_kld.tick_params(axis='y', labelcolor='tab:orange')
         axis.set_title('RSSM Training Loss')
         axis.grid(True, alpha=0.3)
-        axis.legend([recon_line, total_line, kld_line], ['Reconstruction', 'Total', 'KLD'], loc='best')
+        axis.legend([recon_line, total_line, kld_line], ['Reconstruction', 'Total', 'KLD'], loc='upper right')
+        recon_axis.set_ylabel('Image Reconstruction Loss', color='tab:blue')
+        reward_axis.set_ylabel('Reward Reconstruction Loss', color='tab:red')
+        recon_axis.tick_params(axis='y', labelcolor='tab:blue')
+        reward_axis.tick_params(axis='y', labelcolor='tab:red')
+        recon_axis.set_title('Image and Reward Reconstruction')
+        recon_axis.grid(True, alpha=0.3)
+        recon_axis.legend([image_recon_line, reward_recon_line], ['Image Reconstruction', 'Reward Reconstruction'], loc='upper right')
         figure.tight_layout()
 
         if epoch is None:
@@ -498,7 +509,6 @@ class RSSMTrainer:
                 loss_params = {
                     'recon_mult': 1.0,
                     'beta': 1.0,
-                    'lambda': 1.0,
                     'kld_anneal_mode': 'const',
                     'image_loss': 'mse',
                 }
