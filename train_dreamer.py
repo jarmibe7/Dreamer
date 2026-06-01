@@ -1,23 +1,16 @@
 """
-train_rssm.py
+train_dreamer.py
 
-Simple YAML-driven RSSM world model training entrypoint.
+YAML-driven Dreamer training entrypoint.
 """
 import argparse
-import random
-from datetime import datetime
 from pathlib import Path
 
 import yaml
-
-import gymnasium as gym
-import numpy as np
 import torch
-import torch.nn.functional as F
 
-from dreamer.trainer import RSSMTrainer
+from dreamer.dreamer import Dreamer
 from dreamer.runtime_utils import (
-    RenderObservationEnv,
     set_seed,
     make_envs,
     get_control_size,
@@ -29,8 +22,8 @@ from dreamer.runtime_utils import (
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train RSSM world model from YAML config')
-    parser.add_argument('--config', type=str, default='config/train_rssm.yaml')
+    parser = argparse.ArgumentParser(description='Train Dreamer from YAML config')
+    parser.add_argument('--config', type=str, default='config/train_dreamer.yaml')
     args = parser.parse_args()
 
     with open(args.config, 'r', encoding='utf-8') as f:
@@ -49,9 +42,7 @@ def main():
     control_size = get_control_size(train_env.action_space)
     run_dir = make_run_dir(config)
 
-    # Validate and convert training config values to floats/ints as needed
     train_cfg = config.get('training', {})
-    from dreamer.runtime_utils import coerce_training_config
     coerce_training_config(train_cfg)
 
     # Save the config to the run directory for reproducibility
@@ -63,7 +54,7 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(config['training']['learning_rate']))
 
-    trainer = RSSMTrainer(
+    dreamer = Dreamer(
         env=train_env,
         model=model,
         optimizer=optimizer,
@@ -78,6 +69,16 @@ def main():
         run_dir=run_dir,
         render_every_epochs=config['evaluation']['render_every_epochs'],
         eval_max_steps=config['evaluation'].get('max_episode_steps'),
+        imagination_horizon=config['dreamer']['imagination_horizon'],
+        discount=config['dreamer'].get('discount', 0.99),
+        lambda_=config['dreamer'].get('lambda', 0.95),
+        actor_hidden_size=config['dreamer'].get('actor_hidden_size', 256),
+        value_hidden_size=config['dreamer'].get('value_hidden_size', 256),
+        actor_lr=config['dreamer'].get('actor_lr', 1e-4),
+        value_lr=config['dreamer'].get('value_lr', 1e-4),
+        entropy_scale=config['dreamer'].get('entropy_scale', 1e-3),
+        actor_grad_clip=config['dreamer'].get('actor_grad_clip', 100.0),
+        value_grad_clip=config['dreamer'].get('value_grad_clip', 100.0),
     )
 
     train_episodes = int(config['training']['epochs'])
@@ -93,17 +94,17 @@ def main():
         )
 
     try:
-        trainer.train_online(
+        dreamer.train_online(
             num_episodes=config['training']['epochs'],
             max_steps=config['training'].get('max_episode_steps'),
             updates_per_step=config['training']['updates_per_epoch'],
             start_training_after=config['training']['start_training_after'],
             checkpoint_every_epochs=config['checkpoint']['save_every_epochs'],
-            final_weights_name=config['checkpoint'].get('final_weights_name', 'rssm_final.pt'),
+            final_weights_name=config['checkpoint'].get('final_weights_name', 'dreamer_final.pt'),
             plot_losses_every_epochs=config['evaluation']['render_every_epochs'],
         )
     finally:
-        trainer.close()
+        dreamer.close()
 
 
 if __name__ == '__main__':
