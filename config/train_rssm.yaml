@@ -1,6 +1,7 @@
+# Config for training only RSSM (no policy, etc.)
 env:
   # Gym environment id used for training and evaluation
-  name: Acrobot-v1
+  name: CarRacing-v3
   # Spatial size images will be resized to before feeding the encoder
   image_size: 64
   # If true, convert renderings to single-channel grayscale
@@ -30,7 +31,7 @@ model:
 loss:
   recon_mult: 1e3
   # KLD loss multiplier
-  beta: 1e-6
+  beta: 1e-5
   # KLD minimum clip value
   free_nats: 0.0
   kld_anneal_mode: linear
@@ -39,8 +40,8 @@ loss:
 
 training:
   seed: 0
-  device: cuda:0
-  epochs: 500
+  device: cuda:1
+  epochs: 8000
   batch_size: 64
   learning_rate: 2e-4
   buffer_capacity: 2000
@@ -51,7 +52,7 @@ training:
 
 evaluation:
   render_every_epochs: 100
-  max_episode_steps: 500
+  max_episode_steps: 200
 
 checkpoint:
   run_root: runs

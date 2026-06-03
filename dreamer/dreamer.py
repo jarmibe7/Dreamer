@@ -302,15 +302,15 @@ class Dreamer(RSSMTrainer):
             start_h = torch.zeros(self.model.num_layers, batch['x'].size(0), self.model.deterministic_size, device=self.device)
             start_z = posterior_zs[:, -1]
 
-        with self._freeze_modules([self.model]):
-            imagined = self._imagine(start_h, start_z, deterministic=False)
+        # Don't update model weights
+        with self._freeze_modules([self.model, self.value]):
+            imagined = self._imagine(start_h, start_z)
 
-        rewards = imagined['rewards'].squeeze(-1)
-        entropies = imagined['entropies'].squeeze(-1)
-        target_values = self.value(imagined['features'].detach()).squeeze(-1)
-        returns = self._lambda_returns(rewards, target_values.detach())
-
-        actor_loss = -(returns + self.entropy_scale * entropies).mean()
+            rewards = imagined['rewards'].squeeze(-1)
+            entropies = imagined['entropies'].squeeze(-1)
+            target_values = self.value(imagined['features']).squeeze(-1)
+            returns = self._lambda_returns(rewards, target_values)
+            actor_loss = -(returns + self.entropy_scale * entropies).mean()
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -318,8 +318,14 @@ class Dreamer(RSSMTrainer):
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_grad_clip)
         self.actor_optimizer.step()
 
-        value_pred = self.value(imagined['features'].detach()).squeeze(-1)[:, 1:]
-        value_loss = F.mse_loss(value_pred, returns.detach())
+        with torch.no_grad():
+            imagined_detached = self._imagine(start_h, start_z)
+            rewards_d = imagined_detached['rewards'].squeeze(-1)
+            tv_d = self.value(imagined_detached['features']).squeeze(-1)
+            returns_d = self._lambda_returns(rewards_d, tv_d)
+
+        value_pred = self.value(imagined_detached['features'].detach()).squeeze(-1)[:, :-1]
+        value_loss = F.mse_loss(value_pred, returns_d.detach())
 
         self.value_optimizer.zero_grad()
         value_loss.backward()
@@ -331,6 +337,10 @@ class Dreamer(RSSMTrainer):
         loss_return['Value Loss'] = value_loss.detach().cpu().item()
         total_loss = world_model_loss.detach().cpu().item() + loss_return['Actor Loss'] + loss_return['Value Loss']
         loss_return['Dreamer Total Loss'] = total_loss
+        
+        # Track imagined rewards for visualization
+        imagined_reward_mean = rewards_d.mean().detach().cpu().item()
+        loss_return['Imagined Reward Mean'] = imagined_reward_mean
 
         return total_loss, loss_return
 
@@ -370,16 +380,17 @@ class Dreamer(RSSMTrainer):
 
         self.model.load_state_dict(checkpoint)
 
-    def train_online(self, num_episodes, policy_fn=None, eval_policy_fn=None, max_steps=None,
+    def train_online(self, num_episodes, policy_fn=None, exp_fn=None, eval_policy_fn=None, max_steps=None,
                      updates_per_step=1, start_training_after=1, checkpoint_every_epochs=0,
                      final_weights_name='dreamer_final.pt', plot_losses_every_epochs=None,
-                     epoch_offset=0):
+                     epoch_offset=0, exp_noise=0.0):
         if eval_policy_fn is None:
             eval_policy_fn = lambda obs, info: self._policy_from_obs(obs, info, deterministic=True)
 
         return super().train_online(
             num_episodes=num_episodes,
             policy_fn=policy_fn,
+            exp_fn=exp_fn,
             eval_policy_fn=eval_policy_fn,
             max_steps=max_steps,
             updates_per_step=updates_per_step,
@@ -388,4 +399,5 @@ class Dreamer(RSSMTrainer):
             final_weights_name=final_weights_name,
             plot_losses_every_epochs=plot_losses_every_epochs,
             epoch_offset=epoch_offset,
+            exp_noise=exp_noise,
         )

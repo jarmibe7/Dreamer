@@ -162,10 +162,10 @@ class RSSMTrainer:
         if self.evaluator is not None and self.evaluator.eval_env is not None:
             self.evaluator.eval_env.close()
 
-    def train_online(self, num_episodes, policy_fn=None, eval_policy_fn=None, max_steps=None,
+    def train_online(self, num_episodes, policy_fn=None, exp_fn=None, eval_policy_fn=None, max_steps=None,
                      updates_per_step=1, start_training_after=1, checkpoint_every_epochs=0,
                      final_weights_name='rssm_final.pt', plot_losses_every_epochs=None,
-                     epoch_offset=0):
+                     epoch_offset=0, exp_noise=0.0):
         history = []
         progress_bar = tqdm(range(1, num_episodes + 1), desc='training', leave=True)
 
@@ -174,7 +174,15 @@ class RSSMTrainer:
 
         for episode in progress_bar:
             epoch = epoch_offset + episode
-            episode_return, steps = self.collect_episode(policy_fn=policy_fn, max_steps=max_steps)
+
+            if exp_fn is not None and (episode < start_training_after or np.random.rand() < exp_noise):
+                exp_policy_fn = exp_fn
+            else:
+                exp_policy_fn = None
+            episode_return, steps = self.collect_episode(
+                policy_fn=exp_policy_fn,
+                max_steps=max_steps, 
+            )
             epoch_history = {
                 'episode': episode,
                 'return': episode_return,

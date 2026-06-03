@@ -1,6 +1,7 @@
+# Config for training RSSM + policy to complete env task with Dreamer alg
 env:
   # Gym environment id used for training and evaluation
-  name: Pendulum-v1
+  name: CarRacing-v3
   # Spatial size images will be resized to before feeding the encoder
   image_size: 64
   # If true, convert renderings to single-channel grayscale
@@ -14,8 +15,8 @@ model:
   stochastic_size: 32
   # Size of deterministic RNN hidden state
   deterministic_size: 128
-  past_length: 5
-  pred_length: 3
+  past_length: 1
+  pred_length: 5
   output_uncertainty: false
   reward_size: 1
 
@@ -28,10 +29,10 @@ model:
     pad: 1
 
 loss:
-  recon_mult: 1e3
   # KLD loss multiplier
-  beta: 1e-6
+  recon_mult: 1e3
   # KLD minimum clip value
+  beta: 1e-5
   free_nats: 0.0
   kld_anneal_mode: linear
   image_loss: mse
@@ -46,27 +47,28 @@ dreamer:
   lambda: 0.95
   actor_hidden_size: 256
   value_hidden_size: 256
-  actor_lr: 8e-5
-  value_lr: 8e-5
-  entropy_scale: 1e-3
+  actor_lr: 2e-4
+  value_lr: 2e-4
+  entropy_scale: 3e-2
   actor_grad_clip: 100.0
   value_grad_clip: 100.0
 
 training:
   seed: 0
   device: cuda:0
-  epochs: 2000
+  epochs: 8000
   batch_size: 64
   learning_rate: 2e-4
-  buffer_capacity: 2000
-  updates_per_epoch: 5
-  start_training_after: 5
+  buffer_capacity: 50000
+  updates_per_epoch: 50
+  start_training_after: 50
   grad_clip: 100.0
   max_episode_steps: 200
+  exploration_noise: 0.1
 
 evaluation:
   render_every_epochs: 100
-  max_episode_steps: 500
+  max_episode_steps: 200
 
 checkpoint:
   run_root: runs

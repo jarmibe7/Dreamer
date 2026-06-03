@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 
 import yaml
+import numpy as np
 import torch
 
 from dreamer.dreamer import Dreamer
@@ -19,6 +20,13 @@ from dreamer.runtime_utils import (
     make_run_dir,
     coerce_training_config,
 )
+
+def exploration_policy(obs, info):
+    # Directed exploration for car env
+    steering = np.random.uniform(-0.3, 0.3)
+    gas = np.random.uniform(0.5, 1.0)
+    brake = 0.0
+    return np.array([steering, gas, brake], dtype=np.float32)
 
 
 def main():
@@ -96,12 +104,14 @@ def main():
     try:
         dreamer.train_online(
             num_episodes=config['training']['epochs'],
+            exp_fn=exploration_policy,
             max_steps=config['training'].get('max_episode_steps'),
             updates_per_step=config['training']['updates_per_epoch'],
             start_training_after=config['training']['start_training_after'],
             checkpoint_every_epochs=config['checkpoint']['save_every_epochs'],
             final_weights_name=config['checkpoint'].get('final_weights_name', 'dreamer_final.pt'),
             plot_losses_every_epochs=config['evaluation']['render_every_epochs'],
+            exp_noise=config['training'].get('exploration_noise', 0.0),
         )
     finally:
         dreamer.close()

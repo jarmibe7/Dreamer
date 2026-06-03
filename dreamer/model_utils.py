@@ -102,6 +102,7 @@ class RSSMEvaluator:
         value_loss = []
         kld = []
         total = []
+        imagined_reward_means = []
 
         for entry in loss_history:
             loss_return = entry['loss_return']
@@ -118,6 +119,7 @@ class RSSMEvaluator:
             kld.append(kld_value)
             total.append(recon_value + kld_value)
             episode_returns.append(entry.get('return', 0.0))
+            imagined_reward_means.append(loss_return.get('Imagined Reward Mean', 0.0))
 
         # Use a non-interactive backend so saving works over SSH/headless
         try:
@@ -125,6 +127,7 @@ class RSSMEvaluator:
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
         except Exception:
+            "Can't save over SSH"
             import matplotlib.pyplot as plt
 
         figure, axes = plt.subplots(4, 1, figsize=(8, 11), sharex=True, gridspec_kw={'height_ratios': [2, 1, 1, 1]})
@@ -166,13 +169,18 @@ class RSSMEvaluator:
         policy_axis.set_title('Actor and Value Network Losses')
         policy_axis.grid(True, alpha=0.3)
         policy_axis.legend([policy_line, value_line], ['Actor Loss', 'Value Loss'], loc='upper right')
-        episode_axis.plot(episodes, episode_returns, label='Episode Return', color='tab:purple')[0]
-        episode_axis.set_xlabel('Episode')
-        episode_axis.set_ylabel('Episode Return', color='tab:purple')
+        
+        imagined_reward_axis = episode_axis.twinx()
+        episode_line = episode_axis.plot(episodes, episode_returns, label='Episode Return', color='tab:purple')[0]
+        imagined_line = imagined_reward_axis.plot(episodes, imagined_reward_means, label='Imagined Reward Mean', color='tab:cyan')[0]
+        episode_axis.set_xlabel('Epoch')
+        episode_axis.set_ylabel('Cumulative Return', color='tab:purple')
+        imagined_reward_axis.set_ylabel('Imagined Reward Mean', color='tab:cyan')
         episode_axis.tick_params(axis='y', labelcolor='tab:purple')
-        episode_axis.set_title('Episode Return')
+        imagined_reward_axis.tick_params(axis='y', labelcolor='tab:cyan')
+        episode_axis.set_title('Cumulative Return and Imagined Rewards per Training Epoch')
         episode_axis.grid(True, alpha=0.3)
-        episode_axis.legend(loc='upper left')
+        episode_axis.legend([episode_line, imagined_line], ['Episode Return', 'Imagined Reward Mean'], loc='upper left')
         figure.tight_layout()
 
         if epoch is None:

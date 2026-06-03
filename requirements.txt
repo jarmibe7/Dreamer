@@ -1,0 +1,9 @@
+torch>=2.0.0
+numpy>=1.21.0
+gymnasium[box2d,classic_control]>=0.27.0
+PyYAML>=5.4
+tqdm>=4.62.0
+imageio>=2.9.0
+imageio-ffmpeg>=0.4.5
+Pillow>=8.0.0
+matplotlib>=3.4.0
