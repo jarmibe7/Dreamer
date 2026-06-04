@@ -104,7 +104,6 @@ def main():
     try:
         dreamer.train_online(
             num_episodes=config['training']['epochs'],
-            exp_fn=exploration_policy,
             max_steps=config['training'].get('max_episode_steps'),
             updates_per_step=config['training']['updates_per_epoch'],
             start_training_after=config['training']['start_training_after'],
